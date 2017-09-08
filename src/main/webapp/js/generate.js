@@ -166,18 +166,63 @@ function parse(xml) {
         return result;
     }
 
-    function evaluate(depends) {
+    function evaluate(expr, allowStrings) {
         var operators = {
-            "=": {prec: 1, ass: "left"},
-            "!=": {prec: 2, ass: "left"},
-            "!": {prec: 3, ass: "right"},
-            "&&": {prec: 4, ass: "left"},
-            "||": {prec: 5, ass: "left"}
+            "=": {prec: 1, ass: "left", exec: function (a, b) {
+                    return (a === b ? 2 : 0);
+                }, args: 2},
+            "!=": {prec: 2, ass: "left", exec: function (a, b) {
+                    return (a === b ? 0 : 2);
+                }, args: 2},
+            "!": {prec: 3, ass: "right", exec: function (a) {
+                    return 2 - a;
+                }, args: 1},
+            "&&": {prec: 4, ass: "left", exec: function (a, b) {
+                    return Math.min(a, b);
+                }, args: 2},
+            "||": {prec: 5, ass: "left", exec: function (a, b) {
+                    return Math.max(a, b);
+                }, args: 2}
         };
-        
-        var parts = depends.split(/(&&|!=|=|\(|\)|\|\||!)/g);
+
+        function _valueize(arg) {
+            if (typeof arg === "object") {
+                arg = arg.value;
+            }
+
+            if (arg === undefined) {
+                arg = 0;
+            }
+
+            if (typeof arg === "string") {
+                switch (arg) {
+                    case "y":
+                        arg = 2;
+                        break;
+                    case "m":
+                        arg = 1;
+                        break;
+                    default:
+                        if (!allowStrings) {
+                            arg = 0;
+                        }
+                        break;
+                }
+            }
+            return arg;
+        }
+
+        function _apply(op) {
+            var args = [], i, arg;
+            for (i = 0; i < op.args; i += 1) {
+                args.push(_valueize(outputStack.pop()));
+            }
+            return op.exec.apply(null, args);
+        }
+
+        var parts = expr.split(/(&&|!=|=|\(|\)|\|\||!)/g);
         var current, op1, op2;
-        var outputQueue = [];
+        var outputStack = [];
         var operatorStack = [];
 
         while (parts.length > 0) {
@@ -185,7 +230,13 @@ function parse(xml) {
             if (current === "") {
                 continue;
             } else if (current.match(/^[A-Za-z0-9_]+$/)) {
-                outputQueue.push(current);
+                if (current in entries) {
+                    outputStack.push(entries[current]);
+                } else {
+                    outputStack.push(current);
+                }
+            } else if (current.substring(0, 1) === '"' || current.substring(0, 1) === "'") {
+                outputStack.push(current);
             } else if (current in operators) {
                 if (operatorStack.length > 0) {
                     op1 = operators[current];
@@ -194,7 +245,7 @@ function parse(xml) {
                             operators[op2].ass === "left" &&
                             operators[op2].prec <= op1.prec
                             ) {
-                        outputQueue.push(operatorStack.pop());
+                        outputStack.push(_apply(operators[operatorStack.pop()]));
                         op2 = operatorStack[operatorStack.length - 1];
                     }
                 }
@@ -203,7 +254,7 @@ function parse(xml) {
                 operatorStack.push(current);
             } else if (current === ")") {
                 while (operatorStack[operatorStack.length - 1] !== "(") {
-                    outputQueue.push(operatorStack.pop());
+                    outputStack.push(operatorStack.pop());
                 }
                 operatorStack.pop();
             } else {
@@ -211,23 +262,62 @@ function parse(xml) {
             }
         }
         while (operatorStack.length > 0) {
-            outputQueue.push(operatorStack.pop());
+            outputStack.push(_apply(operators[operatorStack.pop()]));
         }
 
-        console.log(depends, outputQueue);
+        return _valueize(outputStack.pop());
+    }
+
+    function calculateDefault(node) {
+        var condition, def, i;
+        var defaults = xpathArray(node, "defaults/default");
+        for (i = 0; i < defaults.length; i += 1) {
+            def = defaults[i];
+            if (def.hasAttribute("if")) {
+                condition = evaluate(def.getAttribute("if"));
+                if (condition > 0) {
+                    return evaluate(def.firstChild.nodeValue, true);
+                }
+            } else {
+                return evaluate(def.firstChild.nodeValue, true);
+            }
+        }
+        return undefined;
+    }
+    
+    function numberToStr(num) {
+        if (typeof num !== "number") {
+            return num;
+        }
+        switch (num) {
+            case "2":
+                return "y";
+            case "1":
+                return "m";
+            default:
+                return "n";
+        }
     }
 
     function parseConfig(node) {
-        var i;
-        var strings = ["symbol", "type", "prompt", "value", "default"];
+        var i, scratch;
+        var strings = ["symbol", "type", "prompt", "value"];
         var result = {};
 
         for (i = 0; i < strings.length; i += 1) {
-            result[strings[i]] = xpathString(node, strings[i]);
+            scratch = xpathString(node, strings[i]);
+            if (scratch !== undefined) {
+                result[strings[i]] = scratch;
+            }
         }
 
-        if ("default" in result) {
-            result.value = evaluate(result.default);
+        if (result.symbol === "KALLSYMS_ABSOLUTE_PERCPU") {
+            debugger;
+        }
+
+        scratch = calculateDefault(node);
+        if (scratch !== undefined) {            
+            result.value = scratch;
         }
 
         var depends = xpathArray(node, "depends/condition");
@@ -240,20 +330,21 @@ function parse(xml) {
                 }
                 result.depends += depends[i].firstChild.nodeValue;
             }
-            evaluate(result.depends);            
+            result.visible = evaluate(result.depends);
         }
         return result;
     }
 
     var entries = {}, next;
-
     var queue = xpathArray(xml, "/menu/entries/*");
     while (queue.length > 0) {
         next = queue.shift();
         if (next.nodeName === "config") {
             next = parseConfig(next);
-
             entries[next.symbol] = next;
+            if (next.visible > 0) {
+            //    console.log(next.symbol, next.value);
+            }
         } else if (next.nodeName === "menu") {
             queue = queue.concat(xpathArray(next, "entries/*"));
         }
