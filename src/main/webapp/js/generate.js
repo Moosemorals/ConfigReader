@@ -26,16 +26,27 @@
 
 /* global xhr, getElements, XPathResult */
 
-function display() {
+function parse(xml) {
     "use strict";
 
-    var xml;
+    var entries = {};
 
-    function xpath(node, path, type) {
-        if (type === undefined) {
-            type = 0; // any
+    function xpathNode(node, path) {
+        var result = xml.evaluate(path, node, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        if (result.resultType === XPathResult.FIRST_ORDERED_NODE_TYPE && result.singleNodeValue !== null) {
+            return result.singleNodeValue;
+        } else {
+            return undefined;
         }
-        return xml.evaluate(path, node, null, type, null);
+    }
+    
+    function xpathNumber(node, path) {
+        var result = xml.evaluate(path, node, null, XPathResult.NUMBER_TYPE, null);
+        if (result.resultType === XPathResult.NUMBER_TYPE && !isNaN(result.numberValue)) {
+            return result.numberValue;
+        } else {
+            return undefined;
+        }
     }
 
     function xpathString(node, path) {
@@ -57,6 +68,7 @@ function display() {
         }
         return result;
     }
+
 
 
     function showDepends(node) {
@@ -72,32 +84,33 @@ function display() {
         return result;
     }
 
-    function showConfig(node) {
-        var config, symbol, prompt, help, type;
-        config = buildElement("div", "config");
+    function showConfig(config) {
+        var result;
+        result = buildElement("div", "config");
 
-        symbol = xpathString(node, "symbol");
-        type = xpathString(node, "type");
-        prompt = xpathString(node, "prompt");
-        help = xpathString(node, "help");
-
-        config.appendChild(
-                buildElement("div", "header",
-                        buildElement("div", "symbol", symbol),
-                        buildElement("div", "type", type),
-                        )
-                );
-        if (prompt !== undefined) {
-            config.appendChild(buildElement("div", "prompt", prompt));
+        if (!config.isVisible()) {
+            result.classList.add("hidden");
         }
 
-        config.appendChild(
-                buildElement("div", "help", help)
+        if ("prompt" in config) {
+            result.appendChild(buildElement("div", "prompt", config.prompt.text));
+        }
+
+        result.appendChild(
+                buildElement("div", "header",
+                        buildElement("div", "symbol", config.symbol),
+                        buildElement("div", "type", config.type),
+                        buildElement("div", "location", config.location)
+                        )
                 );
 
-        config.appendChild(showDepends(node));
+        if ("help" in config) {
+            result.appendChild(
+                    buildElement("div", "help hidden", config.help)
+                    );
+        }
 
-        return config;
+        return result;
     }
 
     function showChoice(node) {
@@ -112,7 +125,7 @@ function display() {
     }
 
     function showMenu(node) {
-        var i, menu, prompt, entries, entry, help;
+        var i, menu, prompt, entries, entry, help, config, menuconfig, scratch;
         menu = buildElement("div", "menu");
 
         prompt = xpathString(node, "prompt");
@@ -126,44 +139,37 @@ function display() {
         entries = xpathArray(node, "entries/*");
         for (i = 0; i < entries.length; i += 1) {
             entry = entries[i];
+            
             switch (entry.nodeName) {
-                case "menu":
-                    //      menu.appendChild(showMenu(entry));
-                    break;
                 case "config":
-                    menu.appendChild(showConfig(entry));
+                    config = parseConfig(entry);
+                    if (!(config.symbol in entries)) {
+                        entries[config.symbol] = config;
+                    } else {
+                        Object.assign(entries[config.symbol], config);
+                    }
+                    scratch = showConfig(config);
+                    if (menuconfig !== undefined) {
+                        if (xpathNumber(entry, "count(depends/condition['"+ menuconfig.symbol+"'])") === 0) {
+                            menuconfig = undefined;
+                        } else {
+                            scratch.classList.add("hidden");
+                        }                    
+                    }
+                    menu.appendChild(scratch);
                     break;
-                case "comment":
-                    menu.appendChild(showComment(entry));
+                case "menuconfig":
+                    menuconfig = parseConfig(entry);
+                    if (!(menuconfig.symbol in entries)) {
+                        entries[config.symbol] = menuconfig;
+                    } else {
+                        Object.assign(entries[menuconfig.symbol], menuconfig);
+                    }
+                    menu.appendChild(showConfig(menuconfig));
                     break;
-
             }
         }
         return menu;
-    }
-}
-
-function parse(xml) {
-    "use strict";
-
-    function xpathString(node, path) {
-        var result = xml.evaluate(path, node, null, XPathResult.STRING_TYPE, null);
-        if (result.resultType === XPathResult.STRING_TYPE && result.stringValue !== "") {
-            return result.stringValue;
-        } else {
-            return undefined;
-        }
-    }
-
-    function xpathArray(node, path) {
-        var result = [], e, i;
-        var raw = xml.evaluate(path, node, null, XPathResult.ORDERED_NODE_ITERATOR_TYPE, null);
-        if (raw.resultType === XPathResult.ORDERED_NODE_ITERATOR_TYPE) {
-            while ((e = raw.iterateNext()) !== null) {
-                result.push(e);
-            }
-        }
-        return result;
     }
 
     function evaluate(expr, allowStrings) {
@@ -284,7 +290,31 @@ function parse(xml) {
         }
         return undefined;
     }
-    
+
+    function applySelects(node, value) {
+        var i, condition, select, target;
+        var selects = xpathArray(node, "selects/select");
+        for (i = 0; i < selects.length; i += 1) {
+            select = selects[i];
+            target = undefined;
+            if (select.hasAttribute("if")) {
+                condition = evaluate(select.getAttribute("if"));
+                if (condition > 0) {
+                    target = select.firstChild.nodeValue;
+                }
+            } else {
+                target = select.firstChild.nodeValue;
+            }
+            if (target !== undefined) {
+                if (target in entries) {
+                    entries[target].value = value;
+                } else {
+                    entries[target] = {value: value, symbol: target};
+                }
+            }
+        }
+    }
+
     function numberToStr(num) {
         if (typeof num !== "number") {
             return num;
@@ -301,7 +331,7 @@ function parse(xml) {
 
     function parseConfig(node) {
         var i, scratch;
-        var strings = ["symbol", "type", "prompt", "value"];
+        var strings = ["symbol", "type", "value"];
         var result = {};
 
         for (i = 0; i < strings.length; i += 1) {
@@ -310,15 +340,15 @@ function parse(xml) {
                 result[strings[i]] = scratch;
             }
         }
-
-        if (result.symbol === "KALLSYMS_ABSOLUTE_PERCPU") {
-            debugger;
-        }
+        
+        result.location = node.getAttribute("file") + ": " + node.getAttribute("line");
 
         scratch = calculateDefault(node);
-        if (scratch !== undefined) {            
+        if (scratch !== undefined) {
             result.value = scratch;
         }
+
+        applySelects(node, result.value);
 
         var depends = xpathArray(node, "depends/condition");
         if (depends.length > 0) {
@@ -332,23 +362,31 @@ function parse(xml) {
             }
             result.visible = evaluate(result.depends);
         }
+
+        scratch = xpathNode(node, "prompt");
+        if (scratch !== undefined) {
+            result.prompt = {text: scratch.firstChild.nodeValue};
+            if (scratch.hasAttribute("if")) {
+                result.prompt.condition = scratch.getAttribute("if");
+            }
+        }
+
+        result.isVisible = function () {
+            if ("prompt" in result) {
+                if ("condition" in result.prompt) {
+                    return evaluate(result.prompt.condition) > 0;
+                } else {
+                    return true;
+                }
+            } else {
+                return false;
+            }
+        };
         return result;
     }
 
-    var entries = {}, next;
-    var queue = xpathArray(xml, "/menu/entries/*");
-    while (queue.length > 0) {
-        next = queue.shift();
-        if (next.nodeName === "config") {
-            next = parseConfig(next);
-            entries[next.symbol] = next;
-            if (next.visible > 0) {
-            //    console.log(next.symbol, next.value);
-            }
-        } else if (next.nodeName === "menu") {
-            queue = queue.concat(xpathArray(next, "entries/*"));
-        }
-    }
+
+    document.querySelector("#holder").appendChild(showMenu(xpathNode(xml, "/menu")));
 
     console.log(Object.keys(entries).length);
 }
