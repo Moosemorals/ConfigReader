@@ -39,7 +39,7 @@ function parse(xml) {
             return undefined;
         }
     }
-    
+
     function xpathNumber(node, path) {
         var result = xml.evaluate(path, node, null, XPathResult.NUMBER_TYPE, null);
         if (result.resultType === XPathResult.NUMBER_TYPE && !isNaN(result.numberValue)) {
@@ -70,107 +70,6 @@ function parse(xml) {
     }
 
 
-
-    function showDepends(node) {
-        var i;
-        var depends = xpathArray(node, "depends/condition");
-
-        var result = buildElement("div", "depends");
-
-        for (i = 0; i < depends.length; i += 1) {
-            result.appendChild(buildElement("span", undefined, depends[i]));
-        }
-
-        return result;
-    }
-
-    function showConfig(config) {
-        var result;
-        result = buildElement("div", "config");
-
-        if (!config.isVisible()) {
-            result.classList.add("hidden");
-        }
-
-        if ("prompt" in config) {
-            result.appendChild(buildElement("div", "prompt", config.prompt.text));
-        }
-
-        result.appendChild(
-                buildElement("div", "header",
-                        buildElement("div", "symbol", config.symbol),
-                        buildElement("div", "type", config.type),
-                        buildElement("div", "location", config.location)
-                        )
-                );
-
-        if ("help" in config) {
-            result.appendChild(
-                    buildElement("div", "help hidden", config.help)
-                    );
-        }
-
-        return result;
-    }
-
-    function showChoice(node) {
-
-    }
-
-    function showComment(node) {
-        return buildElement("div", "comment",
-                buildElement("div", "prompt", xpathString(node, "prompt")),
-                showDepends(node)
-                );
-    }
-
-    function showMenu(node) {
-        var i, menu, prompt, entries, entry, help, config, menuconfig, scratch;
-        menu = buildElement("div", "menu");
-
-        prompt = xpathString(node, "prompt");
-        menu.appendChild(buildElement("div", "caption", prompt !== undefined ? prompt : "Unlabled menu"));
-
-        help = xpathString(node, "help");
-        if (help !== undefined) {
-            menu.appendChild(buildElement("div", "help", help));
-        }
-
-        entries = xpathArray(node, "entries/*");
-        for (i = 0; i < entries.length; i += 1) {
-            entry = entries[i];
-            
-            switch (entry.nodeName) {
-                case "config":
-                    config = parseConfig(entry);
-                    if (!(config.symbol in entries)) {
-                        entries[config.symbol] = config;
-                    } else {
-                        Object.assign(entries[config.symbol], config);
-                    }
-                    scratch = showConfig(config);
-                    if (menuconfig !== undefined) {
-                        if (xpathNumber(entry, "count(depends/condition['"+ menuconfig.symbol+"'])") === 0) {
-                            menuconfig = undefined;
-                        } else {
-                            scratch.classList.add("hidden");
-                        }                    
-                    }
-                    menu.appendChild(scratch);
-                    break;
-                case "menuconfig":
-                    menuconfig = parseConfig(entry);
-                    if (!(menuconfig.symbol in entries)) {
-                        entries[config.symbol] = menuconfig;
-                    } else {
-                        Object.assign(entries[menuconfig.symbol], menuconfig);
-                    }
-                    menu.appendChild(showConfig(menuconfig));
-                    break;
-            }
-        }
-        return menu;
-    }
 
     function evaluate(expr, allowStrings) {
         var operators = {
@@ -340,7 +239,7 @@ function parse(xml) {
                 result[strings[i]] = scratch;
             }
         }
-        
+
         result.location = node.getAttribute("file") + ": " + node.getAttribute("line");
 
         scratch = calculateDefault(node);
@@ -382,13 +281,213 @@ function parse(xml) {
                 return false;
             }
         };
+
+        if (!(result.symbol in entries)) {
+            entries[result.symbol] = result;
+        } else {
+            Object.assign(entries[result.symbol], result);
+        }
         return result;
     }
 
+    function joinDepends(node) {
+        var depends = xpathArray(node, "depends/condition");
+        var i;
+        var result = "";
 
-    document.querySelector("#holder").appendChild(showMenu(xpathNode(xml, "/menu")));
+        for (i = 0; i < depends.length; i += 1) {
+            if (i !== 0) {
+                result += "&&";
+            }
+            result += depends[i].firstChild.nodeValue;
+        }
 
-    console.log(Object.keys(entries).length);
+        return result;
+    }
+
+    function showDepends(node) {
+        var i;
+        var depends = xpathArray(node, "depends/condition");
+
+        var result = buildElement("div", "depends");
+
+        for (i = 0; i < depends.length; i += 1) {
+            result.appendChild(buildElement("span", undefined, depends[i]));
+        }
+
+        return result;
+    }
+
+    function buildConfig(node) {
+        var result;
+        var config = parseConfig(node);
+
+        result = buildElement("div", "config");
+
+        result.dataset.depends = joinDepends(node);
+
+        if (!config.isVisible()) {
+            result.classList.add("hidden");
+        }
+
+        if ("prompt" in config) {
+            result.appendChild(buildElement("div", "prompt", config.prompt.text));
+        }
+
+        result.appendChild(
+                buildElement("div", "header",
+                        buildElement("div", "symbol", config.symbol),
+                        buildElement("div", "type", config.type),
+                        buildElement("div", "location", config.location)
+                        )
+                );
+
+        result.appendChild(showDepends(node));
+
+        if ("help" in config) {
+            result.appendChild(
+                    buildElement("div", "help hidden", config.help)
+                    );
+        }
+
+        return result;
+    }
+
+    function showChoice(node) {
+
+    }
+
+    function buildComment(node) {
+        var div = buildElement("div", "comment",
+                buildElement("div", "prompt", xpathString(node, "prompt")),
+                showDepends(node)
+                );
+
+        div.dataset.depends = joinDepends(node);
+        return div;
+    }
+
+    function buildMenuConfig(node) {
+        var div, menuconfig, next, scratch, offset, children;
+
+        offset = 0;
+
+        menuconfig = parseConfig(node);
+
+        if (!(menuconfig.symbol in entries)) {
+            entries[menuconfig.symbol] = menuconfig;
+        } else {
+            Object.assign(entries[menuconfig.symbol], menuconfig);
+        }
+
+        div = buildElement("div", "menuconfig");
+        div.dataset.depends = joinDepends(node);
+
+        if (!menuconfig.isVisible()) {
+            div.classList.add("hidden");
+        }
+
+        if ("prompt" in menuconfig) {
+            div.appendChild(buildElement("div", "prompt", menuconfig.prompt.text));
+        }
+
+        div.appendChild(
+                buildElement("div", "header",
+                        buildElement("div", "symbol", menuconfig.symbol),
+                        buildElement("div", "type", menuconfig.type),
+                        buildElement("div", "location", menuconfig.location)
+                        )
+                );
+
+        if ("help" in menuconfig) {
+            div.appendChild(
+                    buildElement("div", "help hidden", menuconfig.help)
+                    );
+        }
+
+        children = buildElement("div", "children hidden");
+        next = node.nextSibling;
+        OUTER: while (next !== null && xpathNumber(next, "count(depends/condition['" + menuconfig.symbol + "'])") > 0) {
+            offset += 1;
+            switch (next.nodeName) {
+                case "config":                       
+                    children.appendChild(buildConfig(next));
+                    break;
+                case "comment":
+                    children.appendChild(buildComment(next));
+                    break;
+                case "choice":
+                    // ignored.
+                    break;
+                case "menuconfig":
+                    scratch = buildMenuConfig(next);
+                    children.appendChild(scratch[0]);  
+                    next = scratch[2];
+                    continue;
+                    break;
+                case "menu":
+                    children.appendChild(buildMenu(next, true));
+                    break;
+                default:  
+                    console.log("Skipping " + next.nodeName);
+                    
+                    break;
+            }
+            next = next.nextSibling;
+        }
+        if (children.childNodes.length > 0) {
+            div.appendChild(children);
+        }
+        return [div, offset, next];
+    }
+
+    function buildMenu(node, child) {
+        var i, menu, prompt, entries, next, help, scratch, children;
+        menu = buildElement("div", "menu");
+        menu.dataset.depends = joinDepends(node);
+
+        if (child !== undefined) {
+            menu.classList.add("hidden");
+        }
+
+        prompt = xpathString(node, "prompt");
+        menu.appendChild(buildElement("div", "caption", prompt !== undefined ? prompt : "Unlabled menu"));
+
+        help = xpathString(node, "help");
+        if (help !== undefined) {
+            menu.appendChild(buildElement("div", "help", help));
+        }
+
+        children = buildElement("div", "children");
+        entries = xpathArray(node, "entries/*");
+        for (i = 0; i < entries.length; i += 1) {
+            next = entries[i];
+
+            switch (next.nodeName) {
+                case "comment":
+                    children.appendChild(buildComment(next));
+                    break;
+                case "config":
+                    children.appendChild(buildConfig(next));
+                    break;
+                case "menuconfig":
+                    scratch = buildMenuConfig(next);
+                    children.appendChild(scratch[0]);
+                    i += scratch[1];
+                    break;
+                case "menu":
+                    children.appendChild(buildMenu(next, true));
+                    break;
+            }
+        }
+        if (children.childNodes.length > 0) {
+            menu.appendChild(children);
+        }
+        return menu;
+    }
+
+
+    document.querySelector("#holder").appendChild(buildMenu(xpathNode(xml, "/menu")));
 }
 
 window.addEventListener("load", function () {
