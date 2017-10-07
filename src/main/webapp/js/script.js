@@ -199,7 +199,7 @@ class Entry {
         }
 
         if ("env" in this) {
-            this.val = this.env;
+            this.val = this["env"];
         }
 
         scratch = Xpath.array(node, "depends/condition");
@@ -213,29 +213,21 @@ class Entry {
             }
         }
 
-        scratch = Xpath.array(node, "selects/select");
-        if (scratch.length > 0) {
-            this.selects = [];
-            scratch.forEach(x => this.selects.push(new Conditional(x.firstChild.nodeValue, x.getAttribute("if"))));
-        }
+        const lists = {"selects": "selects/select", "implies": "implies/imply", "defaults": "defaults/default"};
 
-        scratch = Xpath.array(node, "implies/imply");
-        if (scratch.length > 0) {
-            this.implies = [];
-            scratch.forEach(x => this.implies.push(new Conditional(x.firstChild.nodeValue, x.getAttribute("if"))));
-        }
-
-        scratch = Xpath.array(node, "defaults/default");
-        if (scratch.length > 0) {
-            this.defaults = [];
-            scratch.forEach(x => this.defaults.push(new Conditional(x.firstChild.nodeValue, x.getAttribute("if"))));
-        }
-
-        if ("symbol" in this)  {
-            if (this.symbol in symbols) {
-             //   console.warn("Duplicate symbol", this);
+        for (let list in lists) {
+            let scratch = Xpath.array(node, lists[list]);
+            if (scratch.length > 0) {
+                this[list] = [];
+                scratch.forEach(x => this[list].push(new Conditional(x.firstChild.nodeValue, x.getAttribute("if"))));
             }
-            symbols[this.symbol] = this;
+        }
+
+        if ("symbol" in this) {
+            if (this["symbol"] in symbols) {
+                //   console.warn("Duplicate symbol", this);
+            }
+            symbols[this["symbol"]] = this;
         }
     }
 
@@ -245,9 +237,9 @@ class Entry {
 
     get default() {
         if ("defaults" in this) {
-            for (let i = 0; i < this.defaults.length; i += 1) {
-                if (this.defaults[i].test) {
-                    return evaluate(this.defaults[i].value, true);
+            for (let i = 0; i < this["defaults"].length; i += 1) {
+                if (this["defaults"][i].test) {
+                    return evaluate(this["defaults"][i].value, true);
                 }
             }
         } else {
@@ -267,7 +259,7 @@ class Entry {
         this.val = x;
 
         if ("selects" in this) {
-            this.selects.forEach(y => {
+            this["selects"].forEach(y => {
                 if (y.test && y.value in symbols) {
                     symbols[y.value].value = x;
                 }
@@ -275,33 +267,152 @@ class Entry {
         }
     }
 
-    toString() {
-        let result = "";
+    static _buildRadioInput(name, labels, value) {
+        const div = buildElement("div");
 
-        if ("prompt" in this) {
-            result += '"' + this.prompt + "' ";
+        if (value === undefined) {
+            value = 0;
         }
 
-        result += "(" + this.symbol + ": " + this.type + ")";
+        for (let i = 0; i < labels.length; i += 1) {
+            if (labels[i] === undefined) {
+                continue;
+            }
+            const input = buildElement("input");
+            input.type = "radio";
+            input.name = name;
+            input.value = i;
+            if (value === i) {
+                input.checked = true;
+            }
 
-        return result;
+            div.appendChild(buildElement("label", undefined, input, labels[i]));
+        }
+
+        return div;
     }
+
+    static _buildStringInput(name, type, value) {
+        const input = buildElement("input");
+        input.name = name;
+        input.value = value;
+        switch (type) {
+            case "hex":
+                input.type = "text";
+                input.pattern = "[a-f0-9]+";
+                break;
+            case "int":
+                input.type = "number";
+                input.step = 1;
+                break;
+            default:
+                input.type = "text";
+                break;
+        }
+        return input;
+    }
+
+    _buildHeader() {
+        const header = buildElement("div", "entry-header", this["prompt"]);
+
+        if ("symbol" in this) {
+            header.appendChild(buildElement("div", "symbol", this["symbol"]));
+        }
+
+        if ("entries" in this) {
+            header.appendChild(buildElement("div", "expander", "+"));
+        }
+
+        if ("type" in this) {
+            switch (this["type"]) {
+                case "bool":
+                    header.appendChild(Entry._buildRadioInput(this["symbol"], ["No", undefined, "Yes"], this.value));
+                    break;
+                case "tristate":
+                    header.appendChild(Entry._buildRadioInput(this["symbol"], ["No", "Module", "Yes"], this.value));
+                    break;
+                default:
+                    header.appendChild(Entry._buildStringInput(this["symbol"], this["type"], this.value));
+                    break;
+            }
+        }
+        return header;
+    }
+
+    _buildDisplayBody() {
+        const body = buildElement("div", "entry-body");
+
+        if ("help" in this) {
+            body.appendChild( buildElement("div", "entry-help", this["help"]));
+        }
+
+        return body;
+    }
+
+    buildDisplay() {
+        return buildElement("div", "entry " + this.constructor.name,
+            this._buildHeader(),
+            this._buildDisplayBody()
+        );
+    }
+
 }
 
-class Config extends Entry {
+class Menu extends Entry {
     constructor(node, parent) {
         super(node, parent);
 
-    };
-}
+        if (this.constructor.name === "MenuConfig") {
+            return;
+        }
 
-class Choice extends Entry {
-    constructor(node, parent) {
-        super(node, parent);
+        let scratch, i, mc;
+
+        this.entries = [];
+        scratch = Xpath.array(node, "entries/*");
+        for (i = 0; i < scratch.length; i += 1) {
+            switch (scratch[i].nodeName) {
+                case "menu":
+                    this.entries.push(new Menu(scratch[i], this));
+                    break;
+                case "menuconfig":
+                    mc = new MenuConfig(scratch[i], this);
+                    i += mc.childCount;
+                    this.entries.push(mc);
+
+                    break;
+                default:
+                    this.entries.push(new Entry(scratch[i], this));
+                    break;
+            }
+        }
+    }
+
+
+    _expansionHanlder() {
+
+
+    }
+
+    _buildDisplayBody() {
+        const body = buildElement("div", "entry-body");
+
+        if ("help" in this) {
+            body.appendChild(buildElement("div", "entry-help", this["help"]));
+        }
+
+        if (this.entries.length > 0) {
+            this._list = buildElement("ul");
+            this._list.dataset.symbol = this.symbol;
+
+            body.appendChild(this._list);
+        }
+
+        return body;
     }
 }
 
-class MenuConfig extends Entry {
+class MenuConfig extends Menu {
     constructor(node, parent) {
         super(node, parent);
 
@@ -325,66 +436,25 @@ class MenuConfig extends Entry {
 
                     this.entries.push(mc);
                     break;
-                case "config":
-                    this.entries.push(new Config(next, this));
-                    break;
                 default:
                     this.entries.push(new Entry(next, this));
                     break;
             }
             next = next.nextSibling;
-        };
-    };
+        }
+    }
 
     get childCount() {
         let count = 0, i;
 
         for (i = 0; i < this.entries.length; i += 1) {
-            count += 1
+            count += 1;
             if (this.entries[i] instanceof MenuConfig) {
-                count += this.entries[i].childCount ;
+                count += this.entries[i].childCount;
             }
         }
 
         return count;
-    }
-
-    toString() {
-        return super.toString() + " --> ";
-    }
-}
-
-class Menu extends Entry {
-    constructor(node, parent) {
-        super(node, parent);
-
-        let scratch, i, mc;
-
-        this.entries = [];
-        scratch = Xpath.array(node, "entries/*");
-        for (i = 0; i < scratch.length; i += 1) {
-            switch (scratch[i].nodeName) {
-                case "menu":
-                    this.entries.push(new Menu(scratch[i], this));
-                    break;
-                case "menuconfig":
-                    mc = new MenuConfig(scratch[i], this);
-                    i += mc.childCount ;
-                    this.entries.push(mc);
-
-                    break;
-                case "config":
-                    this.entries.push(new Config(scratch[i], this));
-                    break;
-                default:
-                    this.entries.push(new Entry(scratch[i], this));
-                    break;
-            }
-        }
-    };
-
-    toString() {
-        return this.prompt + " --> ";
     }
 }
 
@@ -399,13 +469,9 @@ function parse(xml) {
 
     top.entries.forEach(e => {
         if (e.isVisible) {
-            holder.appendChild(buildElement("div", undefined,
-                e.toString()
-            ));
+            holder.appendChild(e.buildDisplay());
         }
     });
-
-    debugger;
 }
 
 window.addEventListener("load", function () {

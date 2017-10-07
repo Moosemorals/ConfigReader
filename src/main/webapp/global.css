@@ -23,44 +23,21 @@ CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
 ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 */
-/* 
+/*
     Created on : 08-Sep-2017, 11:48:25
     Author     : Osric Wilkinson (osric@fluffypeople.com)
 */
 
-.hidden {
-    display: none !important;
-}
-
-.menu .menu {
-    margin-left: 2em;
-}
-
-.config, .menuconfig {
-    margin-left: 1em;
-    border: thin solid black;
-    padding: 4px;
-    border-radius: 4px;
-    margin-bottom: 2px;
-}
-
-.menuconfig {
-    border: thin solid blue;
-}
-
-.header {
+.entry-header {
     display: flex;
+    flex-flow: row nowrap;
     justify-content: space-between;
 }
 
-.help {
-    white-space: pre-wrap;    
-}
-
-.depends:empty {
+.entry-help {
     display: none;
 }
 
-.depends {
-    
+.empty {
+    display: none;
 }
