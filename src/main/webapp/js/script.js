@@ -1,6 +1,25 @@
 "use strict";
 
 const symbols = {};
+const reverseDepends = {};
+
+function addReverseDepends(from, expr) {
+
+    if (from === undefined) {
+        return;
+    }
+
+    const parts = expr.split(/(&&|!=|=|\(|\)|\|\||!)/g);
+
+    parts.forEach(p => {
+        if (p.match(/^[a-zA-Z0-9_]+$/)) {
+            if (!(p in reverseDepends)) {
+                reverseDepends[p] = {};
+            }
+            reverseDepends[p][from] = true;
+        }
+    });
+}
 
 window.Xpath = (function () {
     return {
@@ -178,9 +197,32 @@ class Conditional {
 }
 
 class Entry {
+
+    static numberToExpr(num) {
+        if (typeof num === "number") {
+            num = num.toString();
+        }
+        switch (num) {
+            default:
+            case "0":
+                return "n";
+            case "1":
+                return "m";
+            case "2":
+                return "y";
+        }
+    }
+
     constructor(node, parent) {
         const strings = ["prompt", "help", "symbol", "type", "env"];
-        let i, scratch;
+        const lists = {
+            "selects": "selects/select",
+            "implies": "implies/imply",
+            "defaults": "defaults/default",
+            "ranges": "ranges/range"
+        };
+
+        let scratch;
 
         if (parent !== undefined) {
             this.parent = parent;
@@ -191,29 +233,12 @@ class Entry {
             line: node.getAttribute("line")
         };
 
-        for (i = 0; i < strings.length; i += 1) {
+        for (let i = 0; i < strings.length; i += 1) {
             scratch = Xpath.string(node, strings[i]);
             if (scratch !== undefined) {
                 this[strings[i]] = scratch;
             }
         }
-
-        if ("env" in this) {
-            this.val = this["env"];
-        }
-
-        scratch = Xpath.array(node, "depends/condition");
-        if (scratch.length > 0) {
-            this.depends = "";
-            for (i = 0; i < scratch.length; i += 1) {
-                if (i > 0) {
-                    this.depends += "&&";
-                }
-                this.depends += scratch[i].firstChild.nodeValue;
-            }
-        }
-
-        const lists = {"selects": "selects/select", "implies": "implies/imply", "defaults": "defaults/default"};
 
         for (let list in lists) {
             let scratch = Xpath.array(node, lists[list]);
@@ -223,9 +248,52 @@ class Entry {
             }
         }
 
+        scratch = Xpath.array(node, "depends/condition");
+        if (scratch.length > 0) {
+            this.depends = "";
+            for (let i = 0; i < scratch.length; i += 1) {
+                let expr = scratch[i].firstChild.nodeValue;
+                addReverseDepends(this["symbol"], expr);
+                if (i > 0) {
+                    this.depends += "&&";
+                }
+                this.depends += expr;
+            }
+        }
+
+        if ("env" in this) {
+            this.val = this["env"];
+        }
+
         if ("symbol" in this) {
             if (this["symbol"] in symbols) {
-                //   console.warn("Duplicate symbol", this);
+
+                const original = symbols[this["symbol"]];
+
+                Object.keys(lists).forEach(m => {
+                    if (m in this) {
+                        if (m in original) {
+                            for (let i = 0; i < this[m].length; i += 1) {
+                                const potentialDuplicate = this[m][i];
+                                if (!original[m].includes(potentialDuplicate)) {
+                                    original[m].push(potentialDuplicate);
+                                }
+                            }
+                        } else {
+                            original[m] = this[m];
+                        }
+                    }
+                });
+
+                if ("depends" in this) {
+                    if ("depends" in original) {
+                        original.depends += "&&" + this.depends;
+                    } else {
+                        original.depends = this.depends;
+                    }
+                }
+
+                return original;
             }
             symbols[this["symbol"]] = this;
         }
@@ -264,6 +332,23 @@ class Entry {
                     symbols[y.value].value = x;
                 }
             });
+        }
+
+        if ("_input" in this) {
+            const input = this._input;
+            const e = evaluate(x, true);
+            switch (this["type"]) {
+                case "bool":
+                case "tristate":
+                    input.querySelectorAll("input").forEach(i => {
+                        i.checked = parseInt(i.value, 10) === e;
+                    });
+                    break;
+
+                default:
+                    input[0].value = e;
+                    break;
+            }
         }
     }
 
@@ -312,6 +397,23 @@ class Entry {
         return input;
     }
 
+    _handleInputChange() {
+
+        switch (this["type"]) {
+            case "bool":
+            case "tristate":
+                this._input.querySelectorAll("input").forEach(i => {
+                    if (i.checked) {
+                        this.value = Entry.numberToExpr(i.value);
+                    }
+                });
+                break;
+            default:
+                this.value = this._input.querySelector("input").value;
+                break;
+        }
+    }
+
     _buildHeader() {
         const header = buildElement("div", "entry-header", this["prompt"]);
 
@@ -326,15 +428,18 @@ class Entry {
         if ("type" in this) {
             switch (this["type"]) {
                 case "bool":
-                    header.appendChild(Entry._buildRadioInput(this["symbol"], ["No", undefined, "Yes"], this.value));
+                    this._input = Entry._buildRadioInput(this["symbol"], ["No", undefined, "Yes"], this.value);
                     break;
                 case "tristate":
-                    header.appendChild(Entry._buildRadioInput(this["symbol"], ["No", "Module", "Yes"], this.value));
+                    this._input = Entry._buildRadioInput(this["symbol"], ["No", "Module", "Yes"], this.value);
                     break;
                 default:
-                    header.appendChild(Entry._buildStringInput(this["symbol"], this["type"], this.value));
+                    this._input = Entry._buildStringInput(this["symbol"], this["type"], this.value);
                     break;
             }
+
+            this._input.addEventListener("change", this._handleInputChange.bind(this));
+            header.appendChild(this._input);
         }
         return header;
     }
@@ -343,7 +448,7 @@ class Entry {
         const body = buildElement("div", "entry-body");
 
         if ("help" in this) {
-            body.appendChild( buildElement("div", "entry-help", this["help"]));
+            body.appendChild(buildElement("div", "entry-help", this["help"]));
         }
 
         return body;
@@ -389,9 +494,30 @@ class Menu extends Entry {
     }
 
 
-    _expansionHanlder() {
+    _expansionHandler() {
+        const list = this._list;
 
+        if (list.classList.contains("empty")) {
+            if ("entries" in this) {
+                if (this.entries.length > 0) {
+                    this.entries.forEach(e => list.appendChild(e.buildDisplay()));
+                    list.classList.remove("empty");
+                }
+            }
+        } else {
+            while (list.firstChild) {
+                list.removeChild(list.firstChild);
+            }
+            list.classList.add("empty");
+        }
+    }
 
+    buildDisplay() {
+        const entry = super.buildDisplay();
+
+        entry.querySelector(".expander").addEventListener("click", this._expansionHandler.bind(this));
+
+        return entry;
     }
 
     _buildDisplayBody() {
@@ -402,7 +528,7 @@ class Menu extends Entry {
         }
 
         if (this.entries.length > 0) {
-            this._list = buildElement("ul");
+            this._list = buildElement("div", "entry-list empty");
             this._list.dataset.symbol = this.symbol;
 
             body.appendChild(this._list);
@@ -474,6 +600,31 @@ function parse(xml) {
     });
 }
 
+function setValuesFromFile(e) {
+    const reader = new FileReader();
+    reader.onload = function (e2) {
+        const text = e2.target.result;
+
+        text.split(/\n/g).forEach(line => {
+            let match = line.match(/^CONFIG_([a-zA-Z0-9_]+)=(.+)$/);
+            if (match) {
+                let symbol = match[1];
+                let value = match[2];
+
+                if (symbol in symbols) {
+                    symbols[symbol].value = value;
+                }
+            }
+        });
+    };
+
+    reader.readAsText(e.target.files[0]);
+}
+
 window.addEventListener("load", function () {
     xhr({url: "xml/linux-4.13.xml", format: "xml"}).then(parse);
+
+    document.getElementById("configFile").addEventListener("change", setValuesFromFile);
 });
+
+

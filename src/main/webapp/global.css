@@ -38,6 +38,15 @@ POSSIBILITY OF SUCH DAMAGE.
     display: none;
 }
 
+.entry-list {
+    display: flex;
+    flex-flow: column nowrap;
+}
+
+.entry-list .entry {
+    margin-left: 1em;
+}
+
 .empty {
     display: none;
 }
