@@ -223,7 +223,7 @@ function evaluate(expr, allowStrings) {
         if (allowStrings) {
             return arg;
         } else if (typeof arg === 'string') {
-            return Entry.numberToExpr(arg);
+            return Entry.exprToNumber(arg);
         }
     }
 
@@ -314,6 +314,20 @@ class Entry {
                 return 'y';
         }
     }
+
+    static exprToNumber(expr) {
+        switch (expr) {
+            default:
+            case 'n':
+                return 0;
+            case 'm':
+                return 1;
+            case 'y':
+                return 2;
+        }
+    }
+
+
 
     constructor(node, parent) {
         const strings = ['prompt', 'help', 'symbol', 'type', 'env'];
@@ -434,7 +448,7 @@ class Entry {
     set value(x) {
         this.val = x;
 
-        this.updateDependencies();
+        this._updateDependencies();
     }
 
     _handleInputChange() {
@@ -452,10 +466,10 @@ class Entry {
                 break;
         }
 
-        this.updateDependencies();
+        this._updateDependencies();
     }
 
-    updateDependencies() {
+    _updateDependencies() {
 
         if ('selects' in this) {
             this['selects'].forEach(y => {
@@ -544,14 +558,12 @@ class Entry {
     }
 
     _buildHeader() {
-        const header = buildElement('div', 'entry-header', this['prompt']);
+        const header = buildElement('div', 'entry-header');
 
-        if ('symbol' in this) {
-            header.appendChild(buildElement('div', 'symbol', this['symbol']));
-        }
-
-        if ('entries' in this) {
-            header.appendChild(buildElement('div', 'expander', '+'));
+        if ('entries' in this && this["entries"].length > 0) {
+            header.appendChild(buildElement('div', 'expander', '+', this['prompt']));
+        } else {
+            header.appendChild(buildElement('div', undefined ,this['prompt']));
         }
 
         if ('type' in this) {

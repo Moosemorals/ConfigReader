@@ -50,3 +50,7 @@ POSSIBILITY OF SUCH DAMAGE.
 .empty, .invisible {
     display: none;
 }
+
+.expander {
+    cursor: pointer;
+}
