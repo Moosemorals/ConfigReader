@@ -227,14 +227,6 @@ function evaluate(expr, allowStrings) {
         }
     }
 
-    function _apply(op) {
-        const args = [];
-        for (let i = 0; i < op.args; i += 1) {
-            args.push(_valueize(outputStack.pop()));
-        }
-        return op.exec.apply(null, args);
-    }
-
     let current, op1, op2;
     const outputStack = [];
     const operatorStack = [];
@@ -260,7 +252,8 @@ function evaluate(expr, allowStrings) {
                     operators[op2].ass === 'left' &&
                     operators[op2].prec <= op1.prec
                     ) {
-                    outputStack.push(_apply(operators[operatorStack.pop()]));
+                    //outputStack.push(_apply(operators[operatorStack.pop()]));
+                    outputStack.push(operatorStack.pop());
                     op2 = operatorStack[operatorStack.length - 1];
                 }
             }
@@ -278,10 +271,26 @@ function evaluate(expr, allowStrings) {
     }
 
     while (operatorStack.length > 0) {
-        outputStack.push(_apply(operators[operatorStack.pop()]));
+       // outputStack.push(_apply(operators[operatorStack.pop()]));
+        outputStack.push(operatorStack.pop());
     }
 
-    return _valueize(outputStack.pop());
+    const rpnStack = [];
+    while (outputStack.length > 0) {
+        const next = outputStack.shift();
+        if (next in operators) {
+            const args = [];
+            const op = operators[next];
+            for (let i = 0; i < op.args; i += 1) {
+                args.push(_valueize(rpnStack.pop()));
+            }
+            rpnStack.push( op.exec.apply(null, args));
+        } else {
+            rpnStack.push(next);
+        }
+    }
+
+    return rpnStack[0];
 }
 
 class Conditional {
@@ -362,6 +371,12 @@ class Entry {
                 this[list] = [];
                 scratch.forEach(x => this[list].push(new Conditional(x.firstChild.nodeValue, x.getAttribute('if'))));
             }
+        }
+
+        scratch = Xpath.array(node, "options/option");
+        if (scratch.length > 0) {
+            this["options"] = [];
+            scratch.forEach(x => this["options"].push(x.firstChild.nodeValue));
         }
 
         scratch = Xpath.array(node, 'depends/condition');
