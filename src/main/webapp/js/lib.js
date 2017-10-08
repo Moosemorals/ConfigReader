@@ -1,4 +1,4 @@
-/* 
+/*
  * The MIT License
  *
  * Copyright 2017 Osric Wilkinson (osric@fluffypeople.com).
@@ -22,36 +22,39 @@
  * THE SOFTWARE.
  */
 
+'use strict';
+
 function pad(number, digits) {
-    var result = number.toString();
+    let result = number.toString();
 
     while (result.length < digits) {
-        result = "0" + result;
+        result = '0' + result;
     }
 
     return result;
 }
 
 function buildElement(tag, classes) {
-    var el = document.createElement(tag);
-    var i;
+    const el = document.createElement(tag);
+
     if (classes) {
         classes = classes.split(/\s+/);
-        for (i = 0; i < classes.length; i += 1) {
+        for (let i = 0; i < classes.length; i += 1) {
             if (classes[i]) {
                 el.classList.add(classes[i]);
             }
         }
     }
-    var index = 2;
+
+    let index = 2;
     while (index < arguments.length) {
 
         switch (typeof arguments[index]) {
-            case "undefined":
+            case 'undefined':
                 // skip it
                 break;
-            case "string":
-            case "number":
+            case 'string':
+            case 'number':
                 el.appendChild(textNode(arguments[index]));
                 break;
             default:
@@ -64,10 +67,10 @@ function buildElement(tag, classes) {
 }
 
 function getElements(selector) {
-    var result = [], i;
-    var nodeList = document.querySelectorAll(selector);
-    if (nodeList !== null) {        
-        for (i = 0; i < nodeList.length; i += 1) {
+    const result = [];
+    const nodeList = document.querySelectorAll(selector);
+    if (nodeList !== null) {
+        for (let i = 0; i < nodeList.length; i += 1) {
             result.push(nodeList[i]);
         }
     }
@@ -108,39 +111,38 @@ function textNode(text) {
  *  format: String,
  *  headers: Object
  * }
- * 
+ *
  */
 function xhr(opts) {
     return new Promise(function (resolve, reject) {
-        var xhr = new XMLHttpRequest();
+        const xhr = new XMLHttpRequest();
 
         // Setup defaults
-        opts = Object.assign({method: "GET", format: 'json'}, opts);
+        opts = Object.assign({method: 'GET', format: 'json'}, opts);
 
-        var params = opts.param;
-        if (params && typeof params === 'object') {
-            params = Object.keys(params).map(function (key) {
+        if ('param' in opts && typeof opts.param === 'object') {
+            const params = Object.keys(opts.param).map(function (key) {
                 return encodeURIComponent(key) + '=' + encodeURIComponent(params[key]);
             }).join('&');
-            
-            opts.url += "?" + params;            
+
+            opts.url += '?' + params;
         }
 
         xhr.open(opts.method, opts.url);
         xhr.onload = function () {
             if (this.status >= 200 && this.status < 300) {
                 switch (opts.format) {
-                    case "json":
+                    case 'json':
                         resolve(JSON.parse(xhr.response));
                         break;
-                    case "xml":
+                    case 'xml':
                         resolve(xhr.responseXML);
                         break;
                     default:
                         resolve(xhr.response);
                         break;
                 }
-                
+
             } else {
                 reject({
                     status: this.status,
@@ -151,16 +153,16 @@ function xhr(opts) {
         xhr.onerror = function () {
             reject({
                 status: this.status,
-                body: {error: "Can't " + opts.method + " " + opts.url}
+                body: {error: 'Can\'t ' + opts.method + ' ' + opts.url}
             });
         };
-        if (opts.headers) {
+        if ('headers' in opts) {
             Object.keys(opts.headers).forEach(function (key) {
                 xhr.setRequestHeader(key, opts.headers[key]);
             });
         }
 
-        if ("body" in opts) {
+        if ('body' in opts) {
             xhr.send(opts.body);
         } else {
             xhr.send();

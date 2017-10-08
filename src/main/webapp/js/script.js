@@ -1,4 +1,4 @@
-"use strict";
+'use strict';
 
 const symbols = {};
 const reverseDepends = {};
@@ -47,7 +47,7 @@ window.Xpath = (function () {
         string: function (node, path) {
             const xml = node.nodeType === Node.DOCUMENT_NODE ? node : node.ownerDocument;
             const result = xml.evaluate(path, node, null, XPathResult.STRING_TYPE, null);
-            if (result.resultType === XPathResult.STRING_TYPE && result.stringValue !== "") {
+            if (result.resultType === XPathResult.STRING_TYPE && result.stringValue !== '') {
                 return result.stringValue;
             } else {
                 return undefined;
@@ -66,40 +66,148 @@ window.Xpath = (function () {
             return result;
         }
 
-    }
+    };
 })();
 
 function evaluate(expr, allowStrings) {
-    const operators = {
-        "=": {
-            prec: 1, ass: "left", exec: function (a, b) {
-                return (a === b ? 2 : 0);
-            }, args: 2
-        },
-        "!=": {
-            prec: 2, ass: "left", exec: function (a, b) {
-                return (a === b ? 0 : 2);
-            }, args: 2
-        },
-        "!": {
-            prec: 3, ass: "right", exec: function (a) {
-                return 2 - a;
-            }, args: 1
-        },
-        "&&": {
-            prec: 4, ass: "left", exec: function (a, b) {
-                return Math.min(a, b);
-            }, args: 2
-        },
-        "||": {
-            prec: 5, ass: "left", exec: function (a, b) {
-                return Math.max(a, b);
-            }, args: 2
+    const Tokenizer = (function (text) {
+        const states = {
+            EOF: 'eof',
+            STRING: 'string',
+            SYMBOL: 'symbol',
+
+            ERROR: 'error',
+            OR: '||',
+            AND: '&&',
+            NOT: '!',
+            EQUALS: '==',
+            NOT_EQUALS: '!=',
+            OPEN_BRACKETS: '(',
+            CLOSE_BRACKETS: ')'
+        };
+
+        let s_val;
+        let EOF = false;
+        let pos = 0;
+
+        function _getChar() {
+            if (EOF || pos >= text.length) {
+                EOF = true;
+                return states.EOF;
+            } else {
+                return text.charAt(pos++);
+            }
         }
+
+        function _ungetChar() {
+            pos -= 1;
+        }
+
+        function _isSymbolChar(c) {
+            if (c === states.EOF) {
+                return false;
+            }
+            return c.match(/[a-zA-Z0-9_]/);
+        }
+
+        function _next() {
+            while (true) {
+                let c = _getChar();
+                if (c === states.EOF) {
+                    return states.EOF;
+                } else if (c === '\'' || c === '"') {
+                    s_val = '';
+                    c = _getChar();
+                    while (c !== states.EOF && c !== '\'' && c !== '"') {
+                        s_val += c;
+                        c = _getChar();
+                    }
+                    return states.STRING;
+                } else if (_isSymbolChar(c)) {
+                    s_val = c;
+                    c = _getChar();
+                    while (_isSymbolChar(c)) {
+                        s_val += c;
+                        c = _getChar();
+                    }
+                    _ungetChar();
+                    return states.SYMBOL;
+                } else if (c === '|') {
+                    c = _getChar();
+                    if (c !== '|') {
+                        return states.ERROR;
+                    } else {
+                        return states.OR;
+                    }
+                } else if (c === '&') {
+                    c = _getChar();
+                    if (c !== '&') {
+                        return states.ERROR;
+                    } else {
+                        return states.AND;
+                    }
+                } else if (c === '!') {
+                    c = _getChar();
+                    if (c === '=') {
+                        return states.NOT_EQUALS;
+                    } else {
+                        _ungetChar();
+                        return states.NOT;
+                    }
+                } else if (c === '=') {
+                    return states.EQUALS;
+                } else if (c === '(') {
+                    return states.OPEN_BRACKETS;
+                } else if (c === ')') {
+                    return states.CLOSE_BRACKETS;
+                } else if (c.match(/\s/)) {
+                    // skip whitespace.
+                } else {
+                    throw new Error('Unexpected character');
+                }
+            }
+        }
+
+        function _getString() {
+            return s_val;
+        }
+
+        return Object.assign({
+            next: _next,
+            str: _getString
+        }, states);
+
+    })(expr);
+
+    const operators = {};
+    operators[Tokenizer.EQUALS] = {
+        prec: 1, ass: 'left', exec: function (a, b) {
+            return (a === b ? 2 : 0);
+        }, args: 2
+    };
+    operators[Tokenizer.NOT_EQUALS] = {
+        prec: 2, ass: 'left', exec: function (a, b) {
+            return (a === b ? 0 : 2);
+        }, args: 2
+    };
+    operators[Tokenizer.NOT] = {
+        prec: 3, ass: 'right', exec: function (a) {
+            return 2 - a;
+        }, args: 1
+    };
+    operators[Tokenizer.AND] = {
+        prec: 4, ass: 'left', exec: function (a, b) {
+            return Math.min(a, b);
+        }, args: 2
+    };
+    operators[Tokenizer.OR] = {
+        prec: 5, ass: 'left', exec: function (a, b) {
+            return Math.max(a, b);
+        }, args: 2
     };
 
     function _valueize(arg) {
-        if (typeof arg === "object") {
+        if (typeof arg === 'object') {
             arg = arg.value;
         }
 
@@ -107,13 +215,16 @@ function evaluate(expr, allowStrings) {
             arg = 0;
         }
 
-        if (typeof arg === "string") {
+        if (typeof arg === 'string') {
             switch (arg) {
-                case "y":
+                case 'y':
                     arg = 2;
                     break;
-                case "m":
+                case 'm':
                     arg = 1;
+                    break;
+                case 'n':
+                    arg = 0;
                     break;
                 default:
                     if (!allowStrings) {
@@ -134,29 +245,29 @@ function evaluate(expr, allowStrings) {
         return op.exec.apply(null, args);
     }
 
-    const parts = expr.split(/(&&|!=|=|\(|\)|\|\||!)/g);
     let current, op1, op2;
     const outputStack = [];
     const operatorStack = [];
 
-    while (parts.length > 0) {
-        current = parts.shift();
-        if (current === "") {
-            continue;
-        } else if (current.match(/^[A-Za-z0-9_]+$/)) {
+    while (true) {
+        current = Tokenizer.next();
+        if (current === Tokenizer.EOF) {
+            break;
+        } else if (current === Tokenizer.SYMBOL) {
+            current = Tokenizer.str();
             if (current in symbols) {
                 outputStack.push(symbols[current]);
             } else {
                 outputStack.push(current);
             }
-        } else if (current.substring(0, 1) === '"' || current.substring(0, 1) === "'") {
-            outputStack.push(current);
+        } else if (current === Tokenizer.STRING) {
+            outputStack.push(Tokenizer.str());
         } else if (current in operators) {
             if (operatorStack.length > 0) {
                 op1 = operators[current];
                 op2 = operatorStack[operatorStack.length - 1];
                 while (op2 in operators &&
-                    operators[op2].ass === "left" &&
+                    operators[op2].ass === 'left' &&
                     operators[op2].prec <= op1.prec
                     ) {
                     outputStack.push(_apply(operators[operatorStack.pop()]));
@@ -164,17 +275,18 @@ function evaluate(expr, allowStrings) {
                 }
             }
             operatorStack.push(current);
-        } else if (current === "(") {
+        } else if (current === Tokenizer.OPEN_BRACKETS) {
             operatorStack.push(current);
-        } else if (current === ")") {
-            while (operatorStack[operatorStack.length - 1] !== "(") {
+        } else if (current === Tokenizer.CLOSE_BRACKETS) {
+            while (operatorStack[operatorStack.length - 1] !== Tokenizer.OPEN_BRACKETS) {
                 outputStack.push(operatorStack.pop());
             }
             operatorStack.pop();
         } else {
-            console.error("Unknown token", current);
+            throw new Error('Unknown token', current);
         }
     }
+
     while (operatorStack.length > 0) {
         outputStack.push(_apply(operators[operatorStack.pop()]));
     }
@@ -199,27 +311,27 @@ class Conditional {
 class Entry {
 
     static numberToExpr(num) {
-        if (typeof num === "number") {
+        if (typeof num === 'number') {
             num = num.toString();
         }
         switch (num) {
             default:
-            case "0":
-                return "n";
-            case "1":
-                return "m";
-            case "2":
-                return "y";
+            case '0':
+                return 'n';
+            case '1':
+                return 'm';
+            case '2':
+                return 'y';
         }
     }
 
     constructor(node, parent) {
-        const strings = ["prompt", "help", "symbol", "type", "env"];
+        const strings = ['prompt', 'help', 'symbol', 'type', 'env'];
         const lists = {
-            "selects": "selects/select",
-            "implies": "implies/imply",
-            "defaults": "defaults/default",
-            "ranges": "ranges/range"
+            'selects': 'selects/select',
+            'implies': 'implies/imply',
+            'defaults': 'defaults/default',
+            'ranges': 'ranges/range'
         };
 
         let scratch;
@@ -229,8 +341,8 @@ class Entry {
         }
 
         this.location = {
-            file: node.getAttribute("file"),
-            line: node.getAttribute("line")
+            file: node.getAttribute('file'),
+            line: node.getAttribute('line')
         };
 
         for (let i = 0; i < strings.length; i += 1) {
@@ -244,31 +356,31 @@ class Entry {
             let scratch = Xpath.array(node, lists[list]);
             if (scratch.length > 0) {
                 this[list] = [];
-                scratch.forEach(x => this[list].push(new Conditional(x.firstChild.nodeValue, x.getAttribute("if"))));
+                scratch.forEach(x => this[list].push(new Conditional(x.firstChild.nodeValue, x.getAttribute('if'))));
             }
         }
 
-        scratch = Xpath.array(node, "depends/condition");
+        scratch = Xpath.array(node, 'depends/condition');
         if (scratch.length > 0) {
-            this.depends = "";
+            this.depends = '';
             for (let i = 0; i < scratch.length; i += 1) {
                 let expr = scratch[i].firstChild.nodeValue;
-                addReverseDepends(this["symbol"], expr);
+                addReverseDepends(this['symbol'], expr);
                 if (i > 0) {
-                    this.depends += "&&";
+                    this.depends += '&&';
                 }
                 this.depends += expr;
             }
         }
 
-        if ("env" in this) {
-            this.val = this["env"];
+        if ('env' in this) {
+            this.val = this['env'];
         }
 
-        if ("symbol" in this) {
-            if (this["symbol"] in symbols) {
+        if ('symbol' in this) {
+            if (this['symbol'] in symbols) {
 
-                const original = symbols[this["symbol"]];
+                const original = symbols[this['symbol']];
 
                 Object.keys(lists).forEach(m => {
                     if (m in this) {
@@ -285,9 +397,9 @@ class Entry {
                     }
                 });
 
-                if ("depends" in this) {
-                    if ("depends" in original) {
-                        original.depends += "&&" + this.depends;
+                if ('depends' in this) {
+                    if ('depends' in original) {
+                        original.depends += '&&' + this.depends;
                     } else {
                         original.depends = this.depends;
                     }
@@ -295,19 +407,19 @@ class Entry {
 
                 return original;
             }
-            symbols[this["symbol"]] = this;
+            symbols[this['symbol']] = this;
         }
     }
 
     get isVisible() {
-        return "prompt" in this && (!("depends" in this) || evaluate(this.depends));
+        return 'prompt' in this && (!('depends' in this) || evaluate(this.depends));
     }
 
     get default() {
-        if ("defaults" in this) {
+        if ('defaults' in this) {
             for (let i = 0; i < this["defaults"].length; i += 1) {
-                if (this["defaults"][i].test) {
-                    return evaluate(this["defaults"][i].value, true);
+                if (this['defaults'][i].test) {
+                    return evaluate(this['defaults'][i].value, true);
                 }
             }
         } else {
@@ -316,7 +428,7 @@ class Entry {
     }
 
     get value() {
-        if ("val" in this && this.val !== undefined) {
+        if ('val' in this && this.val !== undefined) {
             return this.val;
         } else {
             return this.default;
@@ -326,21 +438,21 @@ class Entry {
     set value(x) {
         this.val = x;
 
-        if ("selects" in this) {
-            this["selects"].forEach(y => {
+        if ('selects' in this) {
+            this['selects'].forEach(y => {
                 if (y.test && y.value in symbols) {
                     symbols[y.value].value = x;
                 }
             });
         }
 
-        if ("_input" in this) {
+        if ('_input' in this) {
             const input = this._input;
             const e = evaluate(x, true);
-            switch (this["type"]) {
-                case "bool":
-                case "tristate":
-                    input.querySelectorAll("input").forEach(i => {
+            switch (this['type']) {
+                case 'bool':
+                case 'tristate':
+                    input.querySelectorAll('input').forEach(i => {
                         i.checked = parseInt(i.value, 10) === e;
                     });
                     break;
@@ -353,7 +465,7 @@ class Entry {
     }
 
     static _buildRadioInput(name, labels, value) {
-        const div = buildElement("div");
+        const div = buildElement('div');
 
         if (value === undefined) {
             value = 0;
@@ -363,35 +475,35 @@ class Entry {
             if (labels[i] === undefined) {
                 continue;
             }
-            const input = buildElement("input");
-            input.type = "radio";
+            const input = buildElement('input');
+            input.type = 'radio';
             input.name = name;
             input.value = i;
             if (value === i) {
                 input.checked = true;
             }
 
-            div.appendChild(buildElement("label", undefined, input, labels[i]));
+            div.appendChild(buildElement('label', undefined, input, labels[i]));
         }
 
         return div;
     }
 
     static _buildStringInput(name, type, value) {
-        const input = buildElement("input");
+        const input = buildElement('input');
         input.name = name;
         input.value = value;
         switch (type) {
-            case "hex":
-                input.type = "text";
-                input.pattern = "[a-f0-9]+";
+            case 'hex':
+                input.type = 'text';
+                input.pattern = '[a-f0-9]+';
                 break;
-            case "int":
-                input.type = "number";
+            case 'int':
+                input.type = 'number';
                 input.step = 1;
                 break;
             default:
-                input.type = "text";
+                input.type = 'text';
                 break;
         }
         return input;
@@ -399,63 +511,63 @@ class Entry {
 
     _handleInputChange() {
 
-        switch (this["type"]) {
-            case "bool":
-            case "tristate":
-                this._input.querySelectorAll("input").forEach(i => {
+        switch (this['type']) {
+            case 'bool':
+            case 'tristate':
+                this._input.querySelectorAll('input').forEach(i => {
                     if (i.checked) {
                         this.value = Entry.numberToExpr(i.value);
                     }
                 });
                 break;
             default:
-                this.value = this._input.querySelector("input").value;
+                this.value = this._input.querySelector('input').value;
                 break;
         }
     }
 
     _buildHeader() {
-        const header = buildElement("div", "entry-header", this["prompt"]);
+        const header = buildElement('div', 'entry-header', this['prompt']);
 
-        if ("symbol" in this) {
-            header.appendChild(buildElement("div", "symbol", this["symbol"]));
+        if ('symbol' in this) {
+            header.appendChild(buildElement('div', 'symbol', this['symbol']));
         }
 
-        if ("entries" in this) {
-            header.appendChild(buildElement("div", "expander", "+"));
+        if ('entries' in this) {
+            header.appendChild(buildElement('div', 'expander', '+'));
         }
 
-        if ("type" in this) {
-            switch (this["type"]) {
-                case "bool":
-                    this._input = Entry._buildRadioInput(this["symbol"], ["No", undefined, "Yes"], this.value);
+        if ('type' in this) {
+            switch (this['type']) {
+                case 'bool':
+                    this._input = Entry._buildRadioInput(this['symbol'], ['No', undefined, 'Yes'], this.value);
                     break;
-                case "tristate":
-                    this._input = Entry._buildRadioInput(this["symbol"], ["No", "Module", "Yes"], this.value);
+                case 'tristate':
+                    this._input = Entry._buildRadioInput(this['symbol'], ['No', 'Module', 'Yes'], this.value);
                     break;
                 default:
-                    this._input = Entry._buildStringInput(this["symbol"], this["type"], this.value);
+                    this._input = Entry._buildStringInput(this['symbol'], this['type'], this.value);
                     break;
             }
 
-            this._input.addEventListener("change", this._handleInputChange.bind(this));
+            this._input.addEventListener('change', this._handleInputChange.bind(this));
             header.appendChild(this._input);
         }
         return header;
     }
 
     _buildDisplayBody() {
-        const body = buildElement("div", "entry-body");
+        const body = buildElement('div', 'entry-body');
 
-        if ("help" in this) {
-            body.appendChild(buildElement("div", "entry-help", this["help"]));
+        if ('help' in this) {
+            body.appendChild(buildElement('div', 'entry-help', this['help']));
         }
 
         return body;
     }
 
     buildDisplay() {
-        return buildElement("div", "entry " + this.constructor.name,
+        return buildElement('div', 'entry ' + this.constructor.name,
             this._buildHeader(),
             this._buildDisplayBody()
         );
@@ -467,20 +579,20 @@ class Menu extends Entry {
     constructor(node, parent) {
         super(node, parent);
 
-        if (this.constructor.name === "MenuConfig") {
+        if (this.constructor.name === 'MenuConfig') {
             return;
         }
 
         let scratch, i, mc;
 
         this.entries = [];
-        scratch = Xpath.array(node, "entries/*");
+        scratch = Xpath.array(node, 'entries/*');
         for (i = 0; i < scratch.length; i += 1) {
             switch (scratch[i].nodeName) {
-                case "menu":
+                case 'menu':
                     this.entries.push(new Menu(scratch[i], this));
                     break;
-                case "menuconfig":
+                case 'menuconfig':
                     mc = new MenuConfig(scratch[i], this);
                     i += mc.childCount;
                     this.entries.push(mc);
@@ -493,42 +605,41 @@ class Menu extends Entry {
         }
     }
 
-
     _expansionHandler() {
         const list = this._list;
 
-        if (list.classList.contains("empty")) {
-            if ("entries" in this) {
+        if (list.classList.contains('empty')) {
+            if ('entries' in this) {
                 if (this.entries.length > 0) {
                     this.entries.forEach(e => list.appendChild(e.buildDisplay()));
-                    list.classList.remove("empty");
+                    list.classList.remove('empty');
                 }
             }
         } else {
             while (list.firstChild) {
                 list.removeChild(list.firstChild);
             }
-            list.classList.add("empty");
+            list.classList.add('empty');
         }
     }
 
     buildDisplay() {
         const entry = super.buildDisplay();
 
-        entry.querySelector(".expander").addEventListener("click", this._expansionHandler.bind(this));
+        entry.querySelector('.expander').addEventListener('click', this._expansionHandler.bind(this));
 
         return entry;
     }
 
     _buildDisplayBody() {
-        const body = buildElement("div", "entry-body");
+        const body = buildElement('div', 'entry-body');
 
-        if ("help" in this) {
-            body.appendChild(buildElement("div", "entry-help", this["help"]));
+        if ('help' in this) {
+            body.appendChild(buildElement('div', 'entry-help', this['help']));
         }
 
         if (this.entries.length > 0) {
-            this._list = buildElement("div", "entry-list empty");
+            this._list = buildElement('div', 'entry-list empty');
             this._list.dataset.symbol = this.symbol;
 
             body.appendChild(this._list);
@@ -547,12 +658,12 @@ class MenuConfig extends Menu {
         this.entries = [];
 
         let next = node.nextSibling;
-        while (next !== null && Xpath.number(next, "count(depends[condition = '" + this.symbol + "'])") > 0) {
+        while (next !== null && Xpath.number(next, 'count(depends[condition = \'' + this.symbol + '\'])') > 0) {
             switch (next.nodeName) {
-                case "menu":
+                case 'menu':
                     this.entries.push(new Menu(next, this));
                     break;
-                case "menuconfig":
+                case 'menuconfig':
                     mc = new MenuConfig(next, this);
                     for (i = 0; i < mc.childCount; i += 1) {
                         // Note, take one off the number of entries because we
@@ -589,9 +700,9 @@ function buildMenu(node) {
 }
 
 function parse(xml) {
-    const holder = document.getElementById("holder");
+    const holder = document.getElementById('holder');
 
-    const top = buildMenu(Xpath.node(xml, "/menu"));
+    const top = buildMenu(Xpath.node(xml, '/menu'));
 
     top.entries.forEach(e => {
         if (e.isVisible) {
@@ -621,10 +732,10 @@ function setValuesFromFile(e) {
     reader.readAsText(e.target.files[0]);
 }
 
-window.addEventListener("load", function () {
-    xhr({url: "xml/linux-4.13.xml", format: "xml"}).then(parse);
+window.addEventListener('load', function () {
+    xhr({url: 'xml/linux-4.13.xml', format: 'xml'}).then(parse);
 
-    document.getElementById("configFile").addEventListener("change", setValuesFromFile);
+    document.getElementById('configFile').addEventListener('change', setValuesFromFile);
 });
 
 
