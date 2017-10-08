@@ -121,6 +121,11 @@ function evaluate(expr, allowStrings) {
                     while (c !== states.EOF && c !== '\'' && c !== '"') {
                         s_val += c;
                         c = _getChar();
+                        if (c === '\\') {
+                            c = _getChar();
+                            s_val += c;
+                            c = _getChar();
+                        }
                     }
                     return states.STRING;
                 } else if (_isSymbolChar(c)) {
@@ -215,31 +220,16 @@ function evaluate(expr, allowStrings) {
             arg = 0;
         }
 
-        if (typeof arg === 'string') {
-            switch (arg) {
-                case 'y':
-                    arg = 2;
-                    break;
-                case 'm':
-                    arg = 1;
-                    break;
-                case 'n':
-                    arg = 0;
-                    break;
-                default:
-                    if (!allowStrings) {
-                        arg = 0;
-                    }
-                    break;
-            }
+        if (allowStrings) {
+            return arg;
+        } else if (typeof arg === 'string') {
+            return Entry.numberToExpr(arg);
         }
-        return arg;
     }
 
     function _apply(op) {
         const args = [];
-        let i;
-        for (i = 0; i < op.args; i += 1) {
+        for (let i = 0; i < op.args; i += 1) {
             args.push(_valueize(outputStack.pop()));
         }
         return op.exec.apply(null, args);
@@ -345,12 +335,12 @@ class Entry {
             line: node.getAttribute('line')
         };
 
-        for (let i = 0; i < strings.length; i += 1) {
-            scratch = Xpath.string(node, strings[i]);
+        strings.forEach(name => {
+            scratch = Xpath.string(node, name);
             if (scratch !== undefined) {
-                this[strings[i]] = scratch;
+                this[name] = scratch;
             }
-        }
+        });
 
         for (let list in lists) {
             let scratch = Xpath.array(node, lists[list]);
@@ -381,6 +371,12 @@ class Entry {
             if (this['symbol'] in symbols) {
 
                 const original = symbols[this['symbol']];
+
+                strings.forEach(name => {
+                    if (name in this && !(name in original)) {
+                        original[name] = this[name];
+                    }
+                });
 
                 Object.keys(lists).forEach(m => {
                     if (m in this) {
@@ -438,29 +434,67 @@ class Entry {
     set value(x) {
         this.val = x;
 
+        this.updateDependencies();
+    }
+
+    _handleInputChange() {
+        switch (this['type']) {
+            case 'bool':
+            case 'tristate':
+                this._input.querySelectorAll('input').forEach(i => {
+                    if (i.checked) {
+                        this.val = Entry.numberToExpr(i.value);
+                    }
+                });
+                break;
+            default:
+                this.val = this._input.querySelector('input').value;
+                break;
+        }
+
+        this.updateDependencies();
+    }
+
+    updateDependencies() {
+
         if ('selects' in this) {
             this['selects'].forEach(y => {
                 if (y.test && y.value in symbols) {
-                    symbols[y.value].value = x;
+                    symbols[y.value].value = this.val;
                 }
             });
         }
 
         if ('_input' in this) {
             const input = this._input;
-            const e = evaluate(x, true);
             switch (this['type']) {
                 case 'bool':
                 case 'tristate':
                     input.querySelectorAll('input').forEach(i => {
-                        i.checked = parseInt(i.value, 10) === e;
+                        i.checked = parseInt(i.value, 10) === evaluate(this.val);
                     });
                     break;
 
                 default:
-                    input[0].value = e;
+                    if (input.type === "number" && isNaN(this.val)) {
+                        throw new Error("Not a valid number");
+                    }
+                    input.value = this.val;
                     break;
             }
+        }
+
+        if ('symbol' in this && this['symbol'] in reverseDepends) {
+            Object.keys(reverseDepends[this['symbol']]).forEach(symbol => {
+                const div = document.getElementById(symbol);
+                if (div !== null) {
+                    if (!symbols[symbol].isVisible) {
+                        div.classList.add('invisible');
+                    } else {
+                        div.classList.remove('invisible');
+                    }
+                }
+            });
         }
     }
 
@@ -509,23 +543,6 @@ class Entry {
         return input;
     }
 
-    _handleInputChange() {
-
-        switch (this['type']) {
-            case 'bool':
-            case 'tristate':
-                this._input.querySelectorAll('input').forEach(i => {
-                    if (i.checked) {
-                        this.value = Entry.numberToExpr(i.value);
-                    }
-                });
-                break;
-            default:
-                this.value = this._input.querySelector('input').value;
-                break;
-        }
-    }
-
     _buildHeader() {
         const header = buildElement('div', 'entry-header', this['prompt']);
 
@@ -567,12 +584,21 @@ class Entry {
     }
 
     buildDisplay() {
-        return buildElement('div', 'entry ' + this.constructor.name,
+        const entry = buildElement('div', 'entry ' + this.constructor.name,
             this._buildHeader(),
             this._buildDisplayBody()
         );
-    }
 
+        if ('symbol' in this) {
+            entry.id = this['symbol'];
+        }
+
+        if (!this.isVisible) {
+            entry.classList.add('invisible');
+        }
+
+        return entry;
+    }
 }
 
 class Menu extends Entry {
@@ -705,10 +731,10 @@ function parse(xml) {
     const top = buildMenu(Xpath.node(xml, '/menu'));
 
     top.entries.forEach(e => {
-        if (e.isVisible) {
-            holder.appendChild(e.buildDisplay());
-        }
+        holder.appendChild(e.buildDisplay());
     });
+
+    console.log("Parse complete");
 }
 
 function setValuesFromFile(e) {
@@ -717,13 +743,35 @@ function setValuesFromFile(e) {
         const text = e2.target.result;
 
         text.split(/\n/g).forEach(line => {
-            let match = line.match(/^CONFIG_([a-zA-Z0-9_]+)=(.+)$/);
+            const match = line.match(/^CONFIG_([a-zA-Z0-9_]+)=(.+)$/);
             if (match) {
-                let symbol = match[1];
-                let value = match[2];
+                const symbolName = match[1];
 
-                if (symbol in symbols) {
-                    symbols[symbol].value = value;
+                if (symbolName in symbols) {
+                    const symbol = symbols[symbolName];
+                    const value = match[2];
+
+                    if (!("type" in symbol)) {
+                        throw new Error("Missing type");
+                    }
+
+                    switch (symbol["type"]) {
+                        case "bool":
+                        case "tristate":
+                            symbol.value = value;
+                            break;
+                        case "string":
+                            symbol.value = value.replace(/(["'])(.+)\1/, '$2');
+                            break;
+                        case "int":
+                            symbol.value = parseInt(value, 10);
+                            break;
+                        case "hex":
+                            symbol.value = parseInt(value, 16);
+                            break;
+                        default:
+                            throw new Error("Unknown type");
+                    }
                 }
             }
         });

@@ -47,6 +47,6 @@ POSSIBILITY OF SUCH DAMAGE.
     margin-left: 1em;
 }
 
-.empty {
+.empty, .invisible {
     display: none;
 }
