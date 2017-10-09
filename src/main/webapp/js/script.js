@@ -227,70 +227,81 @@ function evaluate(expr, allowStrings) {
         }
     }
 
-    let current, op1, op2;
-    const outputStack = [];
-    const operatorStack = [];
+    function _getValue(symbol) {
+        if (typeof symbol !== 'object') {
+            return 0;
+        }
+        if ('type' in symbol && symbol['type'] === 'bool' || symbol['type'] === 'tristate') {
+            return Entry.exprToNumber(symbol.value);
+        }
+        return 0;
+    }
 
-    while (true) {
-        current = Tokenizer.next();
-        if (current === Tokenizer.EOF) {
-            break;
-        } else if (current === Tokenizer.SYMBOL) {
-            current = Tokenizer.str();
-            if (current in symbols) {
-                outputStack.push(symbols[current]);
-            } else {
-                outputStack.push(current);
-            }
-        } else if (current === Tokenizer.STRING) {
-            outputStack.push(Tokenizer.str());
-        } else if (current in operators) {
-            if (operatorStack.length > 0) {
-                op1 = operators[current];
-                op2 = operatorStack[operatorStack.length - 1];
-                while (op2 in operators &&
-                    operators[op2].ass === 'left' &&
-                    operators[op2].prec <= op1.prec
-                    ) {
-                    //outputStack.push(_apply(operators[operatorStack.pop()]));
-                    outputStack.push(operatorStack.pop());
-                    op2 = operatorStack[operatorStack.length - 1];
+    function parseExpression() {
+        let current, op1, op2;
+        const outputStack = [];
+        const operatorStack = [];
+
+        while (true) {
+            current = Tokenizer.next();
+            if (current === Tokenizer.EOF) {
+                break;
+            } else if (current === Tokenizer.SYMBOL) {
+                current = Tokenizer.str();
+                if (current in symbols) {
+                    outputStack.push(symbols[current]);
+                } else {
+                    outputStack.push(current);
                 }
+            } else if (current === Tokenizer.STRING) {
+                outputStack.push(Tokenizer.str());
+            } else if (current in operators) {
+                if (operatorStack.length > 0) {
+                    op1 = operators[current];
+                    op2 = operatorStack[operatorStack.length - 1];
+                    while (op2 in operators && operators[op2].ass === 'left' && operators[op2].prec <= op1.prec) {
+                        outputStack.push(operatorStack.pop());
+                        op2 = operatorStack[operatorStack.length - 1];
+                    }
+                }
+                operatorStack.push(current);
+            } else if (current === Tokenizer.OPEN_BRACKETS) {
+                operatorStack.push(current);
+            } else if (current === Tokenizer.CLOSE_BRACKETS) {
+                while (operatorStack[operatorStack.length - 1] !== Tokenizer.OPEN_BRACKETS) {
+                    outputStack.push(operatorStack.pop());
+                }
+                operatorStack.pop();
+            } else {
+                throw new Error('Unknown token', current);
             }
-            operatorStack.push(current);
-        } else if (current === Tokenizer.OPEN_BRACKETS) {
-            operatorStack.push(current);
-        } else if (current === Tokenizer.CLOSE_BRACKETS) {
-            while (operatorStack[operatorStack.length - 1] !== Tokenizer.OPEN_BRACKETS) {
-                outputStack.push(operatorStack.pop());
-            }
-            operatorStack.pop();
-        } else {
-            throw new Error('Unknown token', current);
         }
-    }
 
-    while (operatorStack.length > 0) {
-       // outputStack.push(_apply(operators[operatorStack.pop()]));
-        outputStack.push(operatorStack.pop());
-    }
-
-    const rpnStack = [];
-    while (outputStack.length > 0) {
-        const next = outputStack.shift();
-        if (next in operators) {
-            const args = [];
-            const op = operators[next];
-            for (let i = 0; i < op.args; i += 1) {
-                args.push(_valueize(rpnStack.pop()));
-            }
-            rpnStack.push( op.exec.apply(null, args));
-        } else {
-            rpnStack.push(next);
+        while (operatorStack.length > 0) {
+            outputStack.push(operatorStack.pop());
         }
+        return outputStack;
     }
 
-    return rpnStack[0];
+    function evaluateDepends(inputStack) {
+        const rpnStack = [];
+        while (inputStack.length > 0) {
+            const next = inputStack.shift();
+            if (next in operators) {
+                const args = [];
+                const op = operators[next];
+                for (let i = 0; i < op.args; i += 1) {
+                    args.push(_getValue(rpnStack.pop()));
+                }
+                rpnStack.push(op.exec.apply(null, args));
+            } else {
+                rpnStack.push(next);
+            }
+        }
+        return rpnStack[0];
+    }
+
+    return evaluateDepends(parseExpression());
 }
 
 class Conditional {
@@ -336,8 +347,6 @@ class Entry {
         }
     }
 
-
-
     constructor(node, parent) {
         const strings = ['prompt', 'help', 'symbol', 'type', 'env'];
         const lists = {
@@ -373,10 +382,10 @@ class Entry {
             }
         }
 
-        scratch = Xpath.array(node, "options/option");
+        scratch = Xpath.array(node, 'options/option');
         if (scratch.length > 0) {
-            this["options"] = [];
-            scratch.forEach(x => this["options"].push(x.firstChild.nodeValue));
+            this['options'] = [];
+            scratch.forEach(x => this['options'].push(x.firstChild.nodeValue));
         }
 
         scratch = Xpath.array(node, 'depends/condition');
@@ -489,7 +498,7 @@ class Entry {
         if ('selects' in this) {
             this['selects'].forEach(y => {
                 if (y.test && y.value in symbols) {
-                    symbols[y.value].value = this.val;
+                    symbols[y.value].value = this.value;
                 }
             });
         }
@@ -500,15 +509,15 @@ class Entry {
                 case 'bool':
                 case 'tristate':
                     input.querySelectorAll('input').forEach(i => {
-                        i.checked = parseInt(i.value, 10) === evaluate(this.val);
+                        i.checked = parseInt(i.value, 10) === Entry.exprToNumber(this.value);
                     });
                     break;
 
                 default:
-                    if (input.type === "number" && isNaN(this.val)) {
-                        throw new Error("Not a valid number");
+                    if (input.type === 'number' && isNaN(this.value)) {
+                        throw new Error('Not a valid number');
                     }
-                    input.value = this.val;
+                    input.value = this.value;
                     break;
             }
         }
@@ -527,18 +536,16 @@ class Entry {
         }
     }
 
-    static _buildRadioInput(name, labels, value) {
+    static _buildRadioInput(symbol, labels) {
+        const name = symbol["symbol"];
+        const value = symbol.value;
         const div = buildElement('div');
-
-        if (value === undefined) {
-            value = 0;
-        }
 
         for (let i = 0; i < labels.length; i += 1) {
             if (labels[i] === undefined) {
                 continue;
             }
-            const input = buildElement('input');
+            const input = buildElement('input', 'input-' + labels[i]);
             input.type = 'radio';
             input.name = name;
             input.value = i;
@@ -552,11 +559,11 @@ class Entry {
         return div;
     }
 
-    static _buildStringInput(name, type, value) {
+    static _buildStringInput(symbol) {
         const input = buildElement('input');
-        input.name = name;
-        input.value = value;
-        switch (type) {
+        input.name = symbol["symbol"];
+        input.value = symbol.value;
+        switch (symbol["type"]) {
             case 'hex':
                 input.type = 'text';
                 input.pattern = '[a-f0-9]+';
@@ -575,22 +582,22 @@ class Entry {
     _buildHeader() {
         const header = buildElement('div', 'entry-header');
 
-        if ('entries' in this && this["entries"].length > 0) {
+        if ('entries' in this && this['entries'].length > 0) {
             header.appendChild(buildElement('div', 'expander', '+', this['prompt']));
         } else {
-            header.appendChild(buildElement('div', undefined ,this['prompt']));
+            header.appendChild(buildElement('div', undefined, this['prompt']));
         }
 
         if ('type' in this) {
             switch (this['type']) {
                 case 'bool':
-                    this._input = Entry._buildRadioInput(this['symbol'], ['No', undefined, 'Yes'], this.value);
+                    this._input = Entry._buildRadioInput(this, ['No', undefined, 'Yes']);
                     break;
                 case 'tristate':
-                    this._input = Entry._buildRadioInput(this['symbol'], ['No', 'Module', 'Yes'], this.value);
+                    this._input = Entry._buildRadioInput(this, ['No', 'Module', 'Yes']);
                     break;
                 default:
-                    this._input = Entry._buildStringInput(this['symbol'], this['type'], this.value);
+                    this._input = Entry._buildStringInput(this);
                     break;
             }
 
@@ -761,7 +768,7 @@ function parse(xml) {
         holder.appendChild(e.buildDisplay());
     });
 
-    console.log("Parse complete");
+    console.log('Parse complete');
 }
 
 function setValuesFromFile(e) {
@@ -778,26 +785,26 @@ function setValuesFromFile(e) {
                     const symbol = symbols[symbolName];
                     const value = match[2];
 
-                    if (!("type" in symbol)) {
-                        throw new Error("Missing type");
+                    if (!('type' in symbol)) {
+                        throw new Error('Missing type');
                     }
 
-                    switch (symbol["type"]) {
-                        case "bool":
-                        case "tristate":
+                    switch (symbol['type']) {
+                        case 'bool':
+                        case 'tristate':
                             symbol.value = value;
                             break;
-                        case "string":
+                        case 'string':
                             symbol.value = value.replace(/(["'])(.+)\1/, '$2');
                             break;
-                        case "int":
+                        case 'int':
                             symbol.value = parseInt(value, 10);
                             break;
-                        case "hex":
+                        case 'hex':
                             symbol.value = parseInt(value, 16);
                             break;
                         default:
-                            throw new Error("Unknown type");
+                            throw new Error('Unknown type');
                     }
                 }
             }
